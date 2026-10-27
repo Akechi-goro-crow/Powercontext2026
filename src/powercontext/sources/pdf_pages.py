@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+from collections import Counter
 from io import BytesIO
 from typing import Any, NoReturn
 from urllib.parse import quote
@@ -34,6 +36,31 @@ from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextE
 PDF_PAGE_SOURCE_NAME = "pdf-page"
 _CANDIDATE_LIMIT = 80
 _ANCHOR_LIMIT = 20
+_INCOME_WEIGHT = 2.6
+_CASH_WEIGHT = 1.2
+_LEGAL_WEIGHT = 2.0
+_GEO_WEIGHT = 1.8
+_INCOME_TERMS = frozenset({"revenue", "revenues", "sales", "operating", "income", "profit", "earnings", "expenses"})
+_CASH_TERMS = frozenset({"depreciation", "amortization", "expenditures", "cash", "flows", "purchases"})
+_LEGAL_TERMS = frozenset({"proceedings", "litigation", "legal"})
+_GEO_TERMS = frozenset({"segments", "countries", "america", "europe", "latin", "asia", "africa", "operations"})
+_FINANCIAL_CUES = frozenset({"ebitda", "capex", "margin"})
+_LEGAL_CUES = frozenset({"legal", "lawsuit", "lawsuits", "battles", "battle"})
+_GEO_CUES = frozenset({"geographies", "geography", "geographic"})
+_QUERY_EXPANSIONS = {
+    "geographies": ("segments", "countries", "america", "europe", "latin", "operations"),
+    "geography": ("segments", "countries", "america", "europe", "latin", "operations"),
+    "geographic": ("segments", "countries", "america", "europe", "latin", "operations"),
+    "operates": ("operations", "segments"),
+    "battles": ("proceedings", "litigation"),
+    "battle": ("proceedings", "litigation"),
+    "lawsuit": ("proceedings", "litigation"),
+    "lawsuits": ("proceedings", "litigation"),
+    "legal": ("proceedings", "litigation"),
+    "ebitda": ("depreciation", "amortization"),
+    "capex": ("expenditures", "purchases"),
+    "margin": ("revenue", "sales", "profit"),
+}
 
 
 class PDFDocumentInput(BaseModel):
@@ -132,32 +159,12 @@ class PDFPageTextEvidenceProjection:
 
 
 async def search_pdf_pages(memory: Any, question: str, limit: int = 10) -> tuple[MemoryCitation, ...]:
-    """Return distinct page citations, reranked from Memory's lexical candidates."""
+    """Return distinct page citations after ranking every stored page for the question."""
 
     if limit < 1 or question.strip() == "":
         return ()
-    from powercontext.builtin.runtime.models import SearchMemoryRequest
-
-    hits: list[Any] = []
-    seen_queries: set[str] = set()
-    for query, query_limit in _queries(question):
-        if query in seen_queries:
-            continue
-        seen_queries.add(query)
-        page = await memory.search(SearchMemoryRequest(query=query, mode="fts", limit=query_limit))
-        hits.extend(page.hits)
-    selected: list[MemoryCitation] = []
-    for hit in _rank_hits(question, hits):
-        selected.append(
-            MemoryCitation(
-                memory_ref=hit.memory_ref,
-                entry_id=hit.entry_id,
-                entry_version_id=hit.entry_version_id,
-            )
-        )
-        if len(selected) >= limit:
-            break
-    return tuple(selected)
+    records = await _stored_pages(memory, question)
+    return tuple(record.citation for record in _rank_pages(question, records)[:limit])
 
 
 def _pages(document_id: str, content: bytes) -> tuple[PDFPageInput, ...]:
@@ -183,8 +190,30 @@ def _pages(document_id: str, content: bytes) -> tuple[PDFPageInput, ...]:
     return tuple(pages)
 
 
+async def _stored_pages(memory: Any, question: str) -> list[Any]:
+    if hasattr(memory, "list"):
+        listed = await memory.list()
+        if listed.entries:
+            return list(listed.entries)
+    return await _search_pages(memory, question)
+
+
+async def _search_pages(memory: Any, question: str) -> list[Any]:
+    from powercontext.builtin.runtime.models import SearchMemoryRequest
+
+    hits: list[Any] = []
+    seen_queries: set[str] = set()
+    for query, query_limit in _queries(question):
+        if query in seen_queries:
+            continue
+        seen_queries.add(query)
+        page = await memory.search(SearchMemoryRequest(query=query, mode="fts", limit=query_limit))
+        hits.extend(_SearchPage(hit) for hit in page.hits)
+    return hits
+
+
 def _queries(question: str) -> tuple[tuple[str, int], ...]:
-    terms = list(dict.fromkeys(analyze_fts_query(question).split()))
+    terms = _question_terms(question)
     queries = [(question, _CANDIDATE_LIMIT)]
     anchors = [term for term in terms if any(character.isdigit() for character in term) or len(term) >= 7]
     queries.extend((term, _ANCHOR_LIMIT) for term in anchors[:12])
@@ -195,31 +224,77 @@ def _queries(question: str) -> tuple[tuple[str, int], ...]:
     return tuple(queries)
 
 
-def _rank_hits(question: str, hits: list[Any]) -> list[Any]:
-    weights = _term_weights(question)
-    ranked: list[tuple[float, float, Any]] = []
+def _rank_pages(question: str, records: list[Any]) -> list[Any]:
+    unique = _unique_pages(records)
+    term_sets = [set(analyze_text(_page_text(record)).split()) for record in unique]
+    document_frequency: Counter[str] = Counter()
+    for terms in term_sets:
+        document_frequency.update(terms)
+    cues = set(_question_terms(question))
+    anchors = _expanded_terms(cues)
+    scores = [_page_score(terms, anchors, cues, document_frequency, len(term_sets)) for terms in term_sets]
+    order = sorted(range(len(unique)), key=lambda index: scores[index], reverse=True)
+    return [unique[index] for index in order]
+
+
+def _page_text(record: Any) -> str:
+    entry = getattr(record, "entry", None)
+    if entry is not None:
+        return entry.text
+    return record.text
+
+
+def _unique_pages(records: list[Any]) -> list[Any]:
+    unique: list[Any] = []
     seen: set[tuple[str, str]] = set()
-    for hit in hits:
-        key = (hit.entry_id, hit.entry_version_id)
+    for record in records:
+        key = (record.citation.entry_id, record.citation.entry_version_id)
         if key in seen:
             continue
         seen.add(key)
-        page_terms = set(analyze_text(hit.text).split())
-        overlap = sum(weight for term, weight in weights.items() if term in page_terms)
-        coverage = 0.0 if not weights else sum(1 for term in weights if term in page_terms) / len(weights)
-        ranked.append((overlap + coverage, hit.score, hit))
-    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return [hit for _overlap, _score, hit in ranked]
+        unique.append(record)
+    return unique
 
 
-def _term_weights(question: str) -> dict[str, float]:
-    weights: dict[str, float] = {}
-    for term in analyze_fts_query(question).split():
-        weight = 4.0 if any(character.isdigit() for character in term) else 1.0
-        if len(term) >= 8:
-            weight += 1.0
-        weights[term] = weights.get(term, 0.0) + weight
-    return weights
+def _question_terms(question: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(analyze_fts_query(question).split()))
+
+
+def _expanded_terms(terms: set[str]) -> tuple[str, ...]:
+    expanded: list[str] = []
+    for term in terms:
+        expanded.append(term)
+        expanded.extend(_QUERY_EXPANSIONS.get(term, ()))
+    return tuple(dict.fromkeys(expanded))
+
+
+def _page_score(
+    terms: set[str],
+    anchors: tuple[str, ...],
+    cues: set[str],
+    document_frequency: Counter[str],
+    page_count: int,
+) -> float:
+    score = sum(math.log((page_count + 1) / (document_frequency[anchor] + 1)) for anchor in anchors if anchor in terms)
+    if cues & _FINANCIAL_CUES:
+        score += _INCOME_WEIGHT * len(_INCOME_TERMS & terms) + _CASH_WEIGHT * len(_CASH_TERMS & terms)
+    if cues & _LEGAL_CUES:
+        score += _LEGAL_WEIGHT * len(_LEGAL_TERMS & terms)
+    if cues & _GEO_CUES:
+        score += _GEO_WEIGHT * len(_GEO_TERMS & terms)
+    return score
+
+
+class _SearchPage:
+    """Search hit shaped like a listed Memory entry for ranking."""
+
+    def __init__(self, hit: Any) -> None:
+        self.text = hit.text
+        self.citation = MemoryCitation(
+            memory_ref=hit.memory_ref,
+            entry_id=hit.entry_id,
+            entry_version_id=hit.entry_version_id,
+        )
 
 
 def _invalid(detail: str) -> NoReturn:
