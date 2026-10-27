@@ -48,10 +48,56 @@ async def enabled_profile_scopes(connection: AsyncConnection, scope_ids: tuple[s
 class SourceProcessingPendingProvider:
     """Inspect journal metadata, never Source bodies, prompts, or models."""
 
-    def __init__(self, database: AsyncDatabase, binding_name: str, artifact_family: str) -> None:
+    def __init__(
+        self,
+        database: AsyncDatabase,
+        binding_name: str,
+        artifact_family: str,
+        source_count_threshold: int | None = None,
+    ) -> None:
         self._database = database
         self._binding = binding_name
         self._family = artifact_family
+        self._source_count_threshold = source_count_threshold
+
+    async def admit_count_ready(
+        self,
+        connection: AsyncConnection,
+        after_scope_id: str | None,
+        limit: int,
+        *,
+        excluded_scopes: frozenset[str],
+    ) -> tuple[tuple[str, ...], str | None]:
+        """Accept a bounded page using committed journal and Family cursor metadata."""
+
+        if self._source_count_threshold is None:
+            return (), None
+        heads = SOURCE_JOURNAL_HEADS_TABLE
+        statement = select(heads.c.scope_id, heads.c.position).order_by(heads.c.scope_id).limit(limit)
+        if after_scope_id is not None:
+            statement = statement.where(heads.c.scope_id > after_scope_id)
+        rows = (await connection.execute(statement)).all()
+        cursors = await SourceCursorRepository().load_many(
+            connection, tuple(str(row[0]) for row in rows), self._binding
+        )
+        intents = ArtifactProcessingIntentRepository()
+        admitted: list[str] = []
+        for scope, high in rows:
+            if scope in excluded_scopes:
+                continue
+            cursor = cursors.get(scope)
+            # Journal positions are allocated once per identity, transactionally
+            # and contiguously per Scope. Receipt upgrades reuse their position.
+            pending = int(high) - (0 if cursor is None else cursor.cursor.sequence)
+            if pending < self._source_count_threshold:
+                continue
+            intent = await intents.load(connection, scope, self._binding, for_update=True)
+            if intent is None or intent.dirty_generation == intent.clean_generation:
+                intent = await intents.mark_dirty(connection, scope, self._binding)
+            if intent.requested_generation == intent.handled_generation:
+                await intents.request(connection, scope, self._binding)
+            admitted.append(scope)
+        return tuple(admitted), str(rows[-1][0]) if len(rows) == limit else None
 
     async def reconcile(self, after_scope_id: str | None, limit: int, *, fence: ArtifactProcessingFence) -> str | None:
         heads = SOURCE_JOURNAL_HEADS_TABLE
