@@ -106,6 +106,7 @@ class PreparedContextBuild:
     origins: tuple[PreparedContextOrigin, ...]
     omissions: PreparedContextOmissions = PreparedContextOmissions()
     code_origins: tuple[CodeEvidenceRef, ...] = ()
+    fragments: tuple[PreparedMemoryFragment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,22 @@ class MemoryEntryAddress:
     memory: ArtifactAddress
     entry_id: str
     entry_version_id: str
+
+
+@dataclass(frozen=True)
+class PreparedMemoryFragment:
+    """An unchanged slice of one exact Memory entry version, in Python characters."""
+
+    address: MemoryEntryAddress
+    start: int
+    end: int
+    text: str
+
+    def __post_init__(self) -> None:
+        if type(self.start) is not int or type(self.end) is not int:
+            raise ValueError("fragment coordinates must be integers")  # noqa: TRY003
+        if self.start < 0 or self.end <= self.start or self.end - self.start != len(self.text):
+            raise ValueError("fragment coordinates must match its literal text")  # noqa: TRY003
 
 
 PreparedContextOrigin = MemoryCitation | ArtifactRef | MemoryEntryAddress | ArtifactAddress
@@ -146,7 +163,7 @@ class PreparedProfileCandidate:
 
 
 class PreparedContextBuilder:
-    """Select and render final context without I/O, persistence, or reranking."""
+    """Select and render final context without I/O, persistence, or external inference."""
 
     memory_candidate_limit = 16
     topic_memory_candidate_limit = 8
@@ -211,6 +228,9 @@ class PreparedContextBuilder:
         profile_candidates: Sequence[PreparedProfileCandidate] = (),
         code_candidates: Sequence[PreparedCodeCandidate] = (),
     ) -> PreparedContextBuild:
+        if request.evidence_selection:
+            return self._build_memory_evidence(request, memory_candidates, current_scope_id=current_scope_id)
+
         if request.include_code:
 
             def historical(history_request: PrepareContextRequest, entries: int) -> PreparedContextBuild:
@@ -256,6 +276,21 @@ class PreparedContextBuilder:
             omissions=omissions,
         )
 
+    def _build_memory_evidence(
+        self,
+        request: PrepareContextRequest,
+        candidates: Sequence[PreparedMemoryCandidates],
+        *,
+        current_scope_id: str | None,
+    ) -> PreparedContextBuild:
+        from powercontext.builtin.runtime.prepared_evidence import build_memory_evidence
+
+        if sum(len(group.hits) for group in candidates) > self.memory_candidate_limit:
+            raise PreparedContextInvariantError("memory-candidate-limit")
+        for group in candidates:
+            self._memory_entries(group.memory_ref, group.hits)
+        return build_memory_evidence(request, candidates, current_scope_id=current_scope_id)
+
     def probe_budget(
         self,
         *,
@@ -276,6 +311,18 @@ class PreparedContextBuilder:
         the same inputs as :meth:`build_scopes_result` are guaranteed to yield the same
         counters because both go through :meth:`_select_entries`.
         """
+
+        if request.evidence_selection:
+            result = self.build_scopes_result(
+                request=request, current_scope_id=current_scope_id, memory_candidates=memory_candidates
+            )
+            return RecallBudgetView(
+                max_bytes=request.max_bytes,
+                delivered_items=len(result.origins),
+                truncated_items=result.omissions.truncated_items,
+                dropped_items=result.omissions.dropped_items,
+                unused_bytes=request.max_bytes - result.context.content_bytes,
+            )
 
         content, origins, omissions = self._select_entries(
             request=request,
