@@ -25,10 +25,11 @@ python minimax/context_agent.py prepare "Fix free shipping eligibility for remot
 python minimax/minimax_client.py
 ```
 
-The production MiniMax ChatCompletion v2 request uses the OpenAI-compatible
-`https://api.minimax.chat/v1/text/chatcompletion_v2` endpoint and the
-`MiniMax-Text-01` model. The complete response is saved under
-`minimax/artifacts/minimax/` by the caller. Secrets are read from the
+The MiniMax call uses the OpenAI-compatible endpoint configured by
+`MINIMAX_BASE_URL` and the model configured by `MINIMAX_MODEL`. The actual
+call metadata is recorded in `validation/minimax_call.json`, and the generated
+unified diff is recorded in `validation/minimax_patch.diff`. The response's
+private reasoning content is not committed. Secrets are read from the
 environment and never committed.
 
 ## PowerContext state reuse

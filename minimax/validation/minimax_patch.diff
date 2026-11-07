@@ -1,0 +1,10 @@
+--- a/sample_project/shipping.py
++++ b/sample_project/shipping.py
+@@ -8,6 +8,5 @@ def qualifies_for_free_shipping(subtotal_cny: float, region: str) -> bool:
+ 
+     if subtotal_cny < 0:
+         raise ValueError("subtotal must be non-negative")
+-    if region in REMOTE_REGIONS:
+-        return False
+-    return subtotal_cny >= 99
++    return region not in REMOTE_REGIONS and subtotal_cny >= 99
