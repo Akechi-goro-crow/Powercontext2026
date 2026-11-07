@@ -57,11 +57,14 @@ workflow:
           method: post
           url: '{{#env.FUN_GATEWAY_URL#}}/retrieve'
           headers: 'Content-Type: application/json'
+          params: ''
+          variables: []
           body:
             type: json
             data: '{"query":"{{#sys.query#}}"}'
-          authorization: {type: no-auth}
+          authorization: {type: no-auth, config: null}
           timeout: {max_connect_timeout: 10, max_read_timeout: 20, max_write_timeout: 10}
+          ssl_verify: true
       - id: load_state
         position: {x: 700, y: 180}
         width: 244
@@ -73,11 +76,14 @@ workflow:
           method: post
           url: '{{#env.FUN_GATEWAY_URL#}}/memory/load'
           headers: 'Content-Type: application/json'
+          params: ''
+          variables: []
           body:
             type: json
             data: '{"session_id":"{{#sys.conversation_id#}}"}'
-          authorization: {type: no-auth}
+          authorization: {type: no-auth, config: null}
           timeout: {max_connect_timeout: 10, max_read_timeout: 20, max_write_timeout: 10}
+          ssl_verify: true
       - id: host
         position: {x: 1010, y: 180}
         width: 280
@@ -116,11 +122,14 @@ workflow:
           method: post
           url: '{{#env.FUN_GATEWAY_URL#}}/memory/save'
           headers: 'Content-Type: application/json'
+          params: ''
+          variables: []
           body:
             type: json
             data: '{"session_id":"{{#sys.conversation_id#}}","text":"{{#host.text#}}"}'
-          authorization: {type: no-auth}
+          authorization: {type: no-auth, config: null}
           timeout: {max_connect_timeout: 10, max_read_timeout: 20, max_write_timeout: 10}
+          ssl_verify: true
       - id: answer
         position: {x: 1660, y: 220}
         width: 244
