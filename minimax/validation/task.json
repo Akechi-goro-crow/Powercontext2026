@@ -1,0 +1,13 @@
+{
+  "task": "Fix free shipping eligibility so remote regions are excluded while preserving the inclusive 99 CNY threshold.",
+  "must_preserve": [
+    "Mainland orders at exactly 99 CNY qualify.",
+    "Negative subtotals raise ValueError.",
+    "The public function signature remains qualifies_for_free_shipping(subtotal_cny, region)."
+  ],
+  "required_context": [
+    "minimax/specs/shipping-spec.md",
+    "minimax/sample_project/shipping.py",
+    "minimax/sample_project/test_shipping.py"
+  ]
+}

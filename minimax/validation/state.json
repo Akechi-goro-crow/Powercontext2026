@@ -1,0 +1,12 @@
+{
+  "task": "Fix free shipping eligibility for remote regions",
+  "status": "validated",
+  "selected_sources": [
+    "minimax/specs/shipping-spec.md",
+    "minimax/sample_project/shipping.py",
+    "minimax/sample_project/test_shipping.py"
+  ],
+  "before_result": "remote regions incorrectly qualified",
+  "after_result": "target tests pass and mainland compatibility is preserved",
+  "verification_command": "python -m pytest minimax/sample_project/test_shipping.py -q"
+}
