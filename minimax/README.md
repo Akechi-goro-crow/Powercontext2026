@@ -38,6 +38,18 @@ $env:POWERCONTEXT_URL = "http://127.0.0.1:8000"
 $env:POWERCONTEXT_SCOPE_ID = "replace-with-your-scope-id"
 ```
 
+Start PowerContext in a separate terminal. The server uses SQLite by default,
+which is sufficient for this task's state-reuse requirement:
+
+```powershell
+uv tool install --force "powercontext[cli,server]==1.3.0"
+powercontext server run
+```
+
+If the Windows `uv` launcher reports a child-process permission error, install
+the same package into the project virtual environment and run its local
+`powercontext` command instead.
+
 For a China-region MiniMax account, set the compatible endpoint and model
 shown by the MiniMax console. A current OpenAI-compatible configuration is:
 
