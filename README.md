@@ -20,6 +20,8 @@ python dify/backend/seed_seekdb.py
 export SEEKDB_PATH="$PWD/dify/data/fun.db"
 export POWERCONTEXT_URL="http://127.0.0.1:8000"
 export POWERCONTEXT_SCOPE_ID="replace-with-your-scope-id"
+# 如果 PowerContext Server 开启鉴权，再设置这一项
+export POWERCONTEXT_TOKEN="replace-with-your-server-token"
 uvicorn dify.backend.app:app --host 0.0.0.0 --port 8787
 ```
 

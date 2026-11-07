@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = Path(os.getenv("SEEKDB_PATH", str(ROOT / "data" / "fun.db")))
 POWERCONTEXT_URL = os.getenv("POWERCONTEXT_URL", "http://127.0.0.1:8000").rstrip("/")
 POWERCONTEXT_SCOPE_ID = os.getenv("POWERCONTEXT_SCOPE_ID", "")
+POWERCONTEXT_TOKEN = os.getenv("POWERCONTEXT_TOKEN", "")
 
 
 class QueryRequest(BaseModel):
@@ -38,6 +39,13 @@ def get_collection():
 
 
 app = FastAPI(title="Dify Fun Bridge")
+
+
+def powercontext_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if POWERCONTEXT_TOKEN:
+        headers["Authorization"] = f"Bearer {POWERCONTEXT_TOKEN}"
+    return headers
 
 
 @app.get("/health")
@@ -67,6 +75,7 @@ def load_memory(request: MemoryRequest) -> dict[str, Any]:
         return {"state": "No saved player state is configured yet."}
     response = requests.post(
         f"{POWERCONTEXT_URL}/v1/memory/search",
+        headers=powercontext_headers(),
         json={"scope_id": POWERCONTEXT_SCOPE_ID, "query": request.session_id, "limit": 3},
         timeout=20,
     )
@@ -80,6 +89,7 @@ def save_memory(request: MemoryRequest) -> dict[str, Any]:
         return {"saved": False, "reason": "POWERCONTEXT_SCOPE_ID is not configured"}
     response = requests.post(
         f"{POWERCONTEXT_URL}/v1/memory/remember",
+        headers=powercontext_headers(),
         json={
             "scope_id": POWERCONTEXT_SCOPE_ID,
             "kind": "preference",
