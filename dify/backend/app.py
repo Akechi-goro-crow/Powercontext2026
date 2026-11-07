@@ -13,6 +13,11 @@ from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = Path(os.getenv("SEEKDB_PATH", str(ROOT / "data" / "fun.db")))
+SEEKDB_HOST = os.getenv("SEEKDB_HOST", "")
+SEEKDB_PORT = int(os.getenv("SEEKDB_PORT", "2881"))
+SEEKDB_TENANT = os.getenv("SEEKDB_TENANT", "sys")
+SEEKDB_USER = os.getenv("SEEKDB_USER", "root")
+SEEKDB_PASSWORD = os.getenv("SEEKDB_PASSWORD", "")
 POWERCONTEXT_URL = os.getenv("POWERCONTEXT_URL", "http://127.0.0.1:8000").rstrip("/")
 POWERCONTEXT_SCOPE_ID = os.getenv("POWERCONTEXT_SCOPE_ID", "")
 POWERCONTEXT_TOKEN = os.getenv("POWERCONTEXT_TOKEN", "")
@@ -32,7 +37,17 @@ def get_collection():
         import pyseekdb
     except ImportError as error:
         raise RuntimeError("pyseekdb is required for the Dify bridge") from error
-    client = pyseekdb.Client(path=str(DB_PATH), database="dify_fun")
+    if SEEKDB_HOST:
+        client = pyseekdb.RemoteServerClient(
+            host=SEEKDB_HOST,
+            port=SEEKDB_PORT,
+            tenant=SEEKDB_TENANT,
+            database="dify_fun",
+            user=SEEKDB_USER,
+            password=SEEKDB_PASSWORD,
+        )
+    else:
+        client = pyseekdb.Client(path=str(DB_PATH), database="dify_fun")
     collection = client.get_or_create_collection("debate_lore")
     collection.refresh_index()
     return collection

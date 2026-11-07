@@ -18,6 +18,11 @@ python -m pip install -r dify/requirements.txt
 python dify/backend/seed_seekdb.py
 
 export SEEKDB_PATH="$PWD/dify/data/fun.db"
+# Windows 建议改用远程 seekdb。Docker 默认映射到 127.0.0.1:2881
+# export SEEKDB_HOST="127.0.0.1"
+# export SEEKDB_PORT="2881"
+# export SEEKDB_USER="root"
+# export SEEKDB_PASSWORD=""
 export POWERCONTEXT_URL="http://127.0.0.1:8000"
 export POWERCONTEXT_SCOPE_ID="replace-with-your-scope-id"
 # 如果 PowerContext Server 开启鉴权，再设置这一项
@@ -52,3 +57,13 @@ uvicorn dify.backend.app:app --host 0.0.0.0 --port 8787
 `absurd-debate.yml` 是 Chatflow 导入文件。导入后需要绑定当前工作区的
 LLM，并把 HTTP 节点 URL 改为实际后端地址。DSL 不包含密钥、数据库文件
 或 PowerContext Token。
+
+Windows 运行时请先启动一个可访问的 seekdb Server，再设置 `SEEKDB_HOST`。
+嵌入式 `SEEKDB_PATH` 模式需要 Linux 或 macOS 的原生运行库。Docker 示例为：
+
+```powershell
+docker run -d --name seekdb -p 2881:2881 -p 2886:2886 `
+  -v "${PWD}\dify\data:/var/lib/oceanbase" oceanbase/seekdb:latest
+$env:SEEKDB_HOST = "127.0.0.1"
+$env:SEEKDB_PORT = "2881"
+```
