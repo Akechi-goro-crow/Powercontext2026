@@ -1,0 +1,172 @@
+app:
+  name: 离谱辩论主持人
+  description: 使用 seekdb 世界观素材和 PowerContext 玩家状态主持离谱辩论
+  icon: 🎭
+  icon_background: '#FDE68A'
+  mode: advanced-chat
+  use_icon_as_answer_icon: false
+kind: app
+version: 0.2.0
+workflow:
+  conversation_variables:
+    - id: player_session
+      name: player_session
+      description: 用于 PowerContext 读取和保存玩家状态的会话标识
+      value: ''
+      value_type: string
+  environment_variables:
+    - id: fun_gateway_url
+      name: FUN_GATEWAY_URL
+      description: seekdb 与 PowerContext bridge 的地址
+      value: http://127.0.0.1:8787
+      value_type: string
+    - id: powercontext_scope_id
+      name: POWERCONTEXT_SCOPE_ID
+      description: PowerContext Scope 标识
+      value: ''
+      value_type: string
+      secret: true
+  features:
+    opening_statement: 输入一个离谱问题，我会检索设定、读取状态并主持辩论。
+    opening_statement_type: no-direct
+    suggested_questions:
+      - 月球快递员和会唱歌的火锅谁更适合当市长？
+      - 让图书馆自动门和扫地机器人进行三轮辩论。
+    file_upload:
+      enabled: false
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: true
+  graph:
+    nodes:
+      - id: start
+        position: {x: 80, y: 220}
+        width: 244
+        height: 88
+        type: custom
+        data:
+          title: 开始
+          type: start
+          variables: []
+      - id: retrieve
+        position: {x: 390, y: 180}
+        width: 244
+        height: 120
+        type: custom
+        data:
+          title: 检索离谱设定
+          type: http-request
+          method: post
+          url: '{{#env.FUN_GATEWAY_URL#}}/retrieve'
+          headers: 'Content-Type: application/json'
+          body:
+            type: json
+            data: '{"query":"{{#sys.query#}}"}'
+          authorization: {type: no-auth}
+          timeout: {max_connect_timeout: 10, max_read_timeout: 20, max_write_timeout: 10}
+      - id: load_state
+        position: {x: 700, y: 180}
+        width: 244
+        height: 120
+        type: custom
+        data:
+          title: 读取玩家状态
+          type: http-request
+          method: post
+          url: '{{#env.FUN_GATEWAY_URL#}}/memory/load'
+          headers: 'Content-Type: application/json'
+          body:
+            type: json
+            data: '{"session_id":"{{#conversation.player_session#}}"}'
+          authorization: {type: no-auth}
+          timeout: {max_connect_timeout: 10, max_read_timeout: 20, max_write_timeout: 10}
+      - id: host
+        position: {x: 1010, y: 180}
+        width: 280
+        height: 160
+        type: custom
+        data:
+          title: 辩论主持人
+          type: llm
+          model:
+            provider: langgenius/openai/openai
+            name: gpt-4o-mini
+            mode: chat
+            completion_params: {temperature: 0.85, max_tokens: 900}
+          context: {enabled: false, variable_selector: []}
+          prompt_template:
+            - role: system
+              text: |-
+                你是离谱辩论主持人。你必须基于用户问题主持一场短辩论。
+                不要把检索素材当成现实事实。只把它们当成游戏世界观设定。
+                输出结构为：本轮主题、双方立场、两到三轮交锋、主持人裁判结论、下一轮可玩的钩子。
+                过去状态可以延续角色和梗，但如果状态为空要从头开始。
+                seekdb 检索素材：
+                {{#retrieve.body#}}
+                PowerContext 玩家状态：
+                {{#load_state.body#}}
+            - role: user
+              text: '{{#sys.query#}}'
+      - id: save_state
+        position: {x: 1340, y: 180}
+        width: 244
+        height: 120
+        type: custom
+        data:
+          title: 保存本轮状态
+          type: http-request
+          method: post
+          url: '{{#env.FUN_GATEWAY_URL#}}/memory/save'
+          headers: 'Content-Type: application/json'
+          body:
+            type: json
+            data: '{"session_id":"{{#conversation.player_session#}}","text":"{{#host.text#}}"}'
+          authorization: {type: no-auth}
+          timeout: {max_connect_timeout: 10, max_read_timeout: 20, max_write_timeout: 10}
+      - id: answer
+        position: {x: 1660, y: 220}
+        width: 244
+        height: 88
+        type: custom
+        data:
+          title: 输出辩论
+          type: answer
+          answer: '{{#host.text#}}'
+    edges:
+      - id: start-retrieve
+        source: start
+        sourceHandle: source
+        target: retrieve
+        targetHandle: target
+        type: custom
+        data: {sourceType: start, targetType: http-request}
+      - id: retrieve-load
+        source: retrieve
+        sourceHandle: source
+        target: load_state
+        targetHandle: target
+        type: custom
+        data: {sourceType: http-request, targetType: http-request}
+      - id: load-host
+        source: load_state
+        sourceHandle: source
+        target: host
+        targetHandle: target
+        type: custom
+        data: {sourceType: http-request, targetType: llm}
+      - id: host-save
+        source: host
+        sourceHandle: source
+        target: save_state
+        targetHandle: target
+        type: custom
+        data: {sourceType: llm, targetType: http-request}
+      - id: save-answer
+        source: save_state
+        sourceHandle: source
+        target: answer
+        targetHandle: target
+        type: custom
+        data: {sourceType: http-request, targetType: answer}
+    viewport: {x: 0, y: 0, zoom: 0.7}
