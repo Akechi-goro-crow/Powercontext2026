@@ -8,12 +8,7 @@ app:
 kind: app
 version: 0.2.0
 workflow:
-  conversation_variables:
-    - id: player_session
-      name: player_session
-      description: 用于 PowerContext 读取和保存玩家状态的会话标识
-      value: ''
-      value_type: string
+  conversation_variables: []
   environment_variables:
     - id: fun_gateway_url
       name: FUN_GATEWAY_URL
@@ -78,7 +73,7 @@ workflow:
           headers: 'Content-Type: application/json'
           body:
             type: json
-            data: '{"session_id":"{{#conversation.player_session#}}"}'
+            data: '{"session_id":"{{#sys.conversation_id#}}"}'
           authorization: {type: no-auth}
           timeout: {max_connect_timeout: 10, max_read_timeout: 20, max_write_timeout: 10}
       - id: host
@@ -121,7 +116,7 @@ workflow:
           headers: 'Content-Type: application/json'
           body:
             type: json
-            data: '{"session_id":"{{#conversation.player_session#}}","text":"{{#host.text#}}"}'
+            data: '{"session_id":"{{#sys.conversation_id#}}","text":"{{#host.text#}}"}'
           authorization: {type: no-auth}
           timeout: {max_connect_timeout: 10, max_read_timeout: 20, max_write_timeout: 10}
       - id: answer

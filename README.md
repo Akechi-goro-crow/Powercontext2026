@@ -8,7 +8,7 @@ PowerContext 状态，生成带有双方立场、意外论据和裁判结论的�
 
 - Dify Chatflow 负责输入、HTTP 节点、模型调用、提示词编排和最终回答。
 - seekdb 保存离谱世界观和规则，并通过 `/retrieve` 返回检索结果。
-- PowerContext 保存玩家会话状态和上一轮的辩论结果，下一轮通过
+- PowerContext 保存 Dify 会话 ID 对应的玩家状态和上一轮辩论结果，下一轮通过
   `/memory/load` 读取。
 
 ## 运行
@@ -40,7 +40,7 @@ uvicorn dify.backend.app:app --host 0.0.0.0 --port 8787
 1. seekdb 检索月尘、火锅和主持规则素材。
 2. Dify 生成三轮辩论，并分别呈现双方观点。
 3. 结论引用检索到的设定，不声称真实事实。
-4. PowerContext 保存本轮玩家会话状态。下一轮输入“继续上次辩论”时，
+4. PowerContext 保存本轮 Dify 会话状态。下一轮输入“继续上次辩论”时，
    `/memory/load` 返回上一轮状态，Dify 继续同一场辩论。
 
 重置方式是删除 `dify/data/fun.db`，并在 PowerContext 中使用新的 Scope。
