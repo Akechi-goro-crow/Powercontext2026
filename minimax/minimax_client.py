@@ -14,6 +14,16 @@ import requests
 MINIMAX_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1/chat/completions")
 
 
+def read_context(path: Path) -> str:
+    raw = path.read_bytes()
+    for encoding in ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeError(f"unable to decode context file: {path}")
+
+
 def generate_patch(context: str, task: str, output_path: Path) -> dict[str, Any]:
     """Ask MiniMax for a proposed patch and persist the complete response."""
 
@@ -51,7 +61,7 @@ def main() -> int:
     parser.add_argument("--task", required=True)
     parser.add_argument("--output", type=Path, default=Path("minimax/artifacts/minimax/response.json"))
     args = parser.parse_args()
-    context = args.context_file.read_text(encoding="utf-8")
+    context = read_context(args.context_file)
     payload = generate_patch(context, args.task, args.output)
     print(json.dumps({"model": payload.get("model"), "output": str(args.output)}, ensure_ascii=False))
     return 0

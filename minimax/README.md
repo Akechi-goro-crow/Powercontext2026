@@ -64,7 +64,8 @@ Ingest and retrieve the real engineering sources from seekdb:
 
 ```powershell
 python minimax\context_agent.py ingest
-python minimax\context_agent.py prepare "Fix free shipping eligibility for remote regions" > minimax\validation\context.json
+python minimax\context_agent.py prepare "Fix free shipping eligibility for remote regions" |
+  Out-File -FilePath minimax\validation\context.json -Encoding utf8
 ```
 
 Give the generated context to MiniMax for the actual code change:
