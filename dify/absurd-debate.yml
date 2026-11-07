@@ -32,7 +32,9 @@ workflow:
     retriever_resource:
       enabled: false
     sensitive_word_avoidance:
-      enabled: true
+      enabled: false
+      type: ''
+      config: {}
   graph:
     nodes:
       - id: start
