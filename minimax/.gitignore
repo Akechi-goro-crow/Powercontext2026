@@ -1,0 +1,7 @@
+data/
+artifacts/
+validation/context.json
+__pycache__/
+sample_project/__pycache__/
+sample_project/before/__pycache__/
+*.py[cod]

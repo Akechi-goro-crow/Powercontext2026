@@ -14,6 +14,11 @@ import requests
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = ROOT / "data" / "context.db"
 DEFAULT_MANIFEST = ROOT / "data" / "manifest.json"
+SEEKDB_HOST = os.getenv("SEEKDB_HOST", "")
+SEEKDB_PORT = int(os.getenv("SEEKDB_PORT", "2881"))
+SEEKDB_TENANT = os.getenv("SEEKDB_TENANT", "sys")
+SEEKDB_USER = os.getenv("SEEKDB_USER", "root")
+SEEKDB_PASSWORD = os.getenv("SEEKDB_PASSWORD", "")
 
 
 def _seekdb_collection(db_path: Path):
@@ -21,7 +26,17 @@ def _seekdb_collection(db_path: Path):
         import pyseekdb
     except ImportError as error:
         raise RuntimeError("install pyseekdb before running the seekdb-backed context module") from error
-    client = pyseekdb.Client(path=str(db_path), database="engineering_context")
+    if SEEKDB_HOST:
+        client = pyseekdb.RemoteServerClient(
+            host=SEEKDB_HOST,
+            port=SEEKDB_PORT,
+            tenant=SEEKDB_TENANT,
+            database="engineering_context",
+            user=SEEKDB_USER,
+            password=SEEKDB_PASSWORD,
+        )
+    else:
+        client = pyseekdb.Client(path=str(db_path), database="engineering_context")
     collection = client.get_or_create_collection("artifacts")
     return client, collection
 
@@ -38,7 +53,7 @@ def ingest_seekdb(db_path: Path) -> dict[str, Any]:
     ids = [path.relative_to(ROOT).as_posix() for path in files]
     documents = [path.read_text(encoding="utf-8") for path in files]
     metadatas = [{"path": item} for item in ids]
-    collection.add(ids=ids, documents=documents, metadatas=metadatas)
+    collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
     collection.refresh_index()
     manifest = {"db_path": str(db_path), "documents": ids}
     DEFAULT_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
@@ -62,9 +77,13 @@ class PowerContextState:
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or os.getenv("POWERCONTEXT_URL", "http://127.0.0.1:8000")).rstrip("/")
         self.scope_id = os.getenv("POWERCONTEXT_SCOPE_ID")
+        self.token = os.getenv("POWERCONTEXT_TOKEN", "")
 
     def _request(self, method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = requests.request(method, self.base_url + path, json=payload, timeout=20)
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        response = requests.request(method, self.base_url + path, headers=headers, json=payload, timeout=20)
         response.raise_for_status()
         return response.json()
 

@@ -11,14 +11,14 @@ from typing import Any
 import requests
 
 
-MINIMAX_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.chat/v1/text/chatcompletion_v2")
+MINIMAX_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1/chat/completions")
 
 
 def generate_patch(context: str, task: str, output_path: Path) -> dict[str, Any]:
     """Ask MiniMax for a proposed patch and persist the complete response."""
 
     api_key = os.environ["MINIMAX_API_KEY"]
-    model = os.getenv("MINIMAX_MODEL", "MiniMax-Text-01")
+    model = os.getenv("MINIMAX_MODEL", "MiniMax-M3.1-Flash")
     prompt = (
         "You are modifying a small Python checkout module. Return a unified diff only.\n"
         "Preserve the public function signature and existing compatible behavior.\n\n"
