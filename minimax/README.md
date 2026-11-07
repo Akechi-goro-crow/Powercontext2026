@@ -44,6 +44,7 @@ shown by the MiniMax console. A current OpenAI-compatible configuration is:
 ```powershell
 $env:MINIMAX_BASE_URL = "https://api.minimax.cn/v1/chat/completions"
 $env:MINIMAX_MODEL = "MiniMax-M3.1-Flash"
+$env:MINIMAX_REASONING_EFFORT = "low"
 $env:MINIMAX_API_KEY = Read-Host "MiniMax API key"
 ```
 

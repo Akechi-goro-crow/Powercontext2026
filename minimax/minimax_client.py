@@ -29,6 +29,7 @@ def generate_patch(context: str, task: str, output_path: Path) -> dict[str, Any]
 
     api_key = os.environ["MINIMAX_API_KEY"]
     model = os.getenv("MINIMAX_MODEL", "MiniMax-M3.1-Flash")
+    reasoning_effort = os.getenv("MINIMAX_REASONING_EFFORT", "low")
     prompt = (
         "You are modifying a small Python checkout module. Return a unified diff only.\n"
         "Preserve the public function signature and existing compatible behavior.\n\n"
@@ -44,7 +45,9 @@ def generate_patch(context: str, task: str, output_path: Path) -> dict[str, Any]
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.1,
-            "max_tokens": 4096,
+            "top_p": 0.95,
+            "reasoning_effort": reasoning_effort,
+            "max_tokens": 16384,
         },
         timeout=90,
     )
