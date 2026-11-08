@@ -78,11 +78,19 @@ def canonical_json(value: object) -> bytes:
     return rfc8785.dumps(_validated_json(value))
 
 
-def normalize_text(value: str) -> str:
+def normalize_text(value: str, *, source_refs: Sequence[object] = ()) -> str:
     """Normalize and validate one durable entry body."""
 
     normalized = _normalize_non_empty_string(value, "memory entry text")
-    if len(normalized.encode("utf-8")) > 8192:
+    # Captured PDF evidence must preserve a whole physical page. Its Source
+    # already stores that complete body; splitting or truncating it would break
+    # exact page readback. Ordinary Memory entries keep their existing bound.
+    page_evidence = (
+        len(source_refs) == 1
+        and isinstance(source_refs[0], Mapping)
+        and source_refs[0].get("source_type") == "pdf-page"
+    )
+    if not page_evidence and len(normalized.encode("utf-8")) > 8192:
         raise _CanonicalValueError("text-too-long")
     return normalized
 
@@ -160,7 +168,7 @@ def entry_content_bytes(
 
     return canonical_json({
         "kind": normalize_kind(kind),
-        "text": normalize_text(text),
+        "text": normalize_text(text, source_refs=source_refs),
         "source_refs": normalize_refs(source_refs),
         "artifact_refs": normalize_refs(artifact_refs),
     })
