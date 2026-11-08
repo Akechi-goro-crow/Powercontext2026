@@ -41,6 +41,16 @@
     <div id="results"></div>
   </section>
 </main>
+<script>
+  fetch('/api/health')
+    .then(response => response.json())
+    .then(data => {
+      document.getElementById('backend').textContent = `seekdb 已连接 · 浏览器推理 · ${navigator.gpu ? 'WebGPU 可用' : '当前将使用 WASM'}`;
+    })
+    .catch(() => {
+      document.getElementById('backend').textContent = '无法连接本地 seekdb 服务';
+    });
+</script>
 <script type="module">
   import { env, pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2/+esm";
 
@@ -71,8 +81,6 @@
     if (!response.ok) throw new Error(data.error || "请求失败");
     return data;
   }
-
-  fetch(API + "/api/health").then(r => r.json()).then(data => backendEl.textContent = `seekdb 已连接 · 浏览器推理 · ${canWebGPU ? "WebGPU 可用" : "当前将使用 WASM"}`).catch(() => backendEl.textContent = "无法连接本地 seekdb 服务");
 
   ingest.onclick = async () => {
     ingest.disabled = true;
