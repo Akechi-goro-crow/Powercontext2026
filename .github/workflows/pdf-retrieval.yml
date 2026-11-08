@@ -1,0 +1,70 @@
+name: PDF retrieval acceptance
+
+on:
+  push:
+    branches: [codex/all-challenges]
+    paths:
+      - src/powercontext/sources/pdf_pages.py
+      - tests/test_pdf_pages.py
+      - tests/pdf_helpers.py
+      - tests/e2e/test_pdf_retrieval.py
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/pdf-retrieval.yml
+  pull_request:
+    paths:
+      - src/powercontext/sources/pdf_pages.py
+      - tests/test_pdf_pages.py
+      - tests/pdf_helpers.py
+      - tests/e2e/test_pdf_retrieval.py
+      - .github/workflows/pdf-retrieval.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pdf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check out the published evaluation assets
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: oceanbase/powercontext
+          ref: dab240063bfcfa7917898dc44da4baadb3747bd0
+          path: public-evaluation
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the fixed evaluation dependencies
+        run: python -m pip install -r public-evaluation/competition/requirements.txt
+
+      - name: Run the published PDF acceptance tests
+        env:
+          POWERCONTEXT_CANDIDATE: ${{ github.workspace }}
+          POWERCONTEXT_PUBLIC: ${{ github.workspace }}/public-evaluation/competition
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/public-evaluation/competition
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONHASHSEED: "0"
+        run: >-
+          python -m pytest -q -s
+          -c public-evaluation/competition/pytest.ini
+          --confcutdir=public-evaluation/competition
+          public-evaluation/competition/challenges/source-03-pdf-retrieval/acceptance
+
+      - name: Run parser and persistent Runtime regressions
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: python -m pytest -q tests/test_pdf_pages.py tests/e2e/test_pdf_retrieval.py
