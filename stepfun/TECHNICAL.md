@@ -6,7 +6,7 @@
 
 ## seekdb 数据层
 
-Node 服务使用 `seekdb` SDK 的 `SeekdbClient` 连接 `stepfun_kb` 数据库和 `browser_documents` collection。collection 保存文档 ID、原文、标题元数据和 384 维向量。导入使用 `upsert`，完成后调用 `refreshIndex()`。查询通过 `hybridSearch()` 一次请求完成全文条件和 KNN 向量排序，客户端不分别拉取两路结果再拼接。
+Node 服务使用 `seekdb` SDK 的 `SeekdbClient` 连接 `stepfun_kb` 数据库和 `browser_documents` collection。collection 保存文档 ID、原文、标题元数据和 384 维向量。导入使用 `upsert`，提交后由 seekdb 的索引管线维护可检索状态。查询通过 `hybridSearch()` 一次请求完成全文条件和 KNN 向量排序，客户端不分别拉取两路结果再拼接。
 
 ## 性能记录模板
 
