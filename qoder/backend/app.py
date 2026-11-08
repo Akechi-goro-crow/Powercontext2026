@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +95,8 @@ def health() -> dict[str, Any]:
 
 @app.post("/api/ingest")
 def ingest(note: NoteInput) -> dict[str, Any]:
-    note_id = f"note-{abs(hash((note.title, note.source))) % 10**12}"
+    stable_id = hashlib.sha256(f"{note.title}\n{note.source}".encode("utf-8")).hexdigest()[:16]
+    note_id = f"note-{stable_id}"
     document = f"标题：{note.title}\n标签：{', '.join(note.tags)}\n来源：{note.source}\n\n{note.content}"
     try:
         collection = get_collection()
