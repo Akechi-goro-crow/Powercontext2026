@@ -1717,10 +1717,10 @@ class MemoryService:
         artifacts: Sequence[ArtifactRef],
     ) -> _EntryMaterial:
         normalized_kind = normalize_kind(kind)
-        normalized_text = normalize_text(text)
         canonical_sources = _canonical_source_refs(sources)
         canonical_artifacts = _canonical_artifact_refs(artifacts)
         source_refs = tuple(source.model_dump(mode="json") for source in canonical_sources)
+        normalized_text = normalize_text(text, source_refs=source_refs)
         artifact_refs = tuple(artifact.model_dump(mode="json") for artifact in canonical_artifacts)
         content_bytes = entry_content_bytes(
             kind=normalized_kind,
