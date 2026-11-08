@@ -36,6 +36,7 @@ class NoteInput(BaseModel):
 class SearchInput(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     limit: int = Field(default=5, ge=1, le=20)
+    tags: list[str] = Field(default_factory=list)
 
 
 class MemoryInput(BaseModel):
@@ -114,7 +115,13 @@ def ingest(note: NoteInput) -> dict[str, Any]:
 @app.post("/api/search")
 def search(request: SearchInput) -> dict[str, Any]:
     try:
-        result = get_collection().query(query_texts=[request.query], n_results=request.limit)
+        query_kwargs: dict[str, Any] = {
+            "query_texts": [request.query],
+            "n_results": request.limit,
+        }
+        if request.tags:
+            query_kwargs["where"] = {"tags": {"$in": request.tags}}
+        result = get_collection().query(**query_kwargs)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"seekdb search failed: {error}") from error
     ids = result.get("ids", [[]])[0]
@@ -122,6 +129,7 @@ def search(request: SearchInput) -> dict[str, Any]:
     metadatas = result.get("metadatas", [[]])[0]
     return {
         "query": request.query,
+        "tags": request.tags,
         "results": [
             {"id": item_id, "content": content, "metadata": metadata}
             for item_id, content, metadata in zip(ids, documents, metadatas, strict=False)

@@ -39,6 +39,7 @@
     <section>
       <h2>按问题找资料</h2>
       <input id="query" placeholder="例如：注意力机制如何减少长距离依赖？" />
+      <input id="searchTags" placeholder="按标签筛选（可选），用逗号分隔，例如：深度学习,注意力" />
       <button onclick="searchNotes()">检索</button>
       <div id="results" class="hint">检索结果会显示在这里。</div>
     </section>
@@ -57,7 +58,7 @@
 const call = (path, body) => fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail || '请求失败'); return data; });
 function setStatus(text) { document.getElementById('status').textContent = text; }
 async function ingest() { try { const data = await call('/api/ingest', { title: title.value, content: content.value, tags: tags.value.split(',').map(x => x.trim()).filter(Boolean), source: source.value }); setStatus(data.message + '：' + data.title); } catch (e) { setStatus(e.message); } }
-async function searchNotes() { try { const data = await call('/api/search', { query: query.value, limit: 5 }); results.innerHTML = data.results.length ? data.results.map(x => `<div class="result"><b>${x.metadata?.title || x.id}</b><br>${x.content}</div>`).join('') : '没有找到相关资料。'; } catch (e) { results.textContent = e.message; } }
+async function searchNotes() { const searchTagsValue = searchTags.value.split(',').map(x => x.trim()).filter(Boolean); const body = { query: query.value, limit: 5 }; if (searchTagsValue.length) body.tags = searchTagsValue; try { const data = await call('/api/search', body); results.innerHTML = data.results.length ? data.results.map(x => `<div class="result"><b>${x.metadata?.title || x.id}</b><br>${x.content}</div>`).join('') : '没有找到相关资料。'; } catch (e) { results.textContent = e.message; } }
 async function saveMemory() { try { const data = await call('/api/memory/save', { user_id: userId.value, text: memoryText.value }); memory.textContent = JSON.stringify(data.result, null, 2); setStatus('研究进度已保存到 PowerContext。'); } catch (e) { memory.textContent = e.message; } }
 async function loadMemory() { try { const data = await call('/api/memory/load', { user_id: userId.value, text: '' }); memory.textContent = JSON.stringify(data.memory, null, 2); setStatus('已从 PowerContext 读取历史上下文。'); } catch (e) { memory.textContent = e.message; } }
 </script>
