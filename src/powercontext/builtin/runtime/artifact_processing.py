@@ -100,6 +100,19 @@ class ArtifactProcessingPendingProvider(Protocol):
         ...
 
 
+class ArtifactProcessingCountPendingProvider(Protocol):
+    """Accept count-ready work inside the Supervisor's fenced transaction."""
+
+    async def admit_count_ready(
+        self,
+        connection: AsyncConnection,
+        after_scope_id: str | None,
+        limit: int,
+        *,
+        excluded_scopes: frozenset[str],
+    ) -> tuple[tuple[str, ...], str | None]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactProcessingBinding:
     """Startup registration of one Family and its independently budgeted Worker."""
@@ -117,6 +130,7 @@ class ArtifactProcessingBinding:
     # Only automatic admission is filtered; already accepted requests retain
     # their own Worker authorization and domain completion semantics.
     automatic_scope_filter: Callable[[AsyncConnection, tuple[str, ...]], Awaitable[frozenset[str]]] | None = None
+    count_pending_provider: ArtifactProcessingCountPendingProvider | None = None
 
     def __post_init__(self) -> None:
         if not self.binding_name or self.binding_name != self.binding_name.strip():
@@ -397,6 +411,7 @@ class _FamilyState:
     scan_in_progress: bool = False
     reconcile_after: str | None = None
     reconcile_complete: bool = False
+    count_after: str | None = None
     notification_at_start: int = 0
     discovery_pending: bool = True
     next_schedule_at: float | None = None
@@ -585,6 +600,7 @@ class ArtifactProcessingSupervisor:
             state.discovery_pending = True
             state.reconcile_complete = False
             state.reconcile_after = None
+            state.count_after = None
         if self._lease_mode == "oceanbase":
             self._renew_task = asyncio.create_task(self._renew(), name=f"artifact-lease-{self._supervisor_group}")
 
@@ -656,6 +672,23 @@ class ArtifactProcessingSupervisor:
         else:
             await self._discover_requested(state)
             await self._discover_automatic(state)
+        await self._discover_count(state)
+
+    async def _discover_count(self, state: _FamilyState) -> None:
+        provider = state.binding.count_pending_provider
+        capacity = self._fresh_capacity(state)
+        if provider is None or capacity <= 0:
+            return
+        excluded = frozenset(state.queued | state.running.keys() | state.retries.keys())
+        async with self._database.transaction() as connection:
+            await self._leases.require_fence(connection, self._require_current_fence())
+            admitted, after = await provider.admit_count_ready(
+                connection, state.count_after, min(capacity, _DISCOVERY_PAGE_SIZE), excluded_scopes=excluded
+            )
+        # Neither the page cursor nor ready work may escape a rolled-back admission.
+        state.count_after = after
+        for scope in admitted:
+            self._enqueue(state, scope)
 
     async def _discover_requested(self, state: _FamilyState) -> None:
         capacity = self._fresh_capacity(state)
@@ -1093,6 +1126,8 @@ class ArtifactProcessingSupervisor:
                 continue
             if state.next_schedule_at is not None:
                 deadlines.append(state.next_schedule_at)
+            if state.binding.count_pending_provider is not None:
+                deadlines.append(now + (_DISCOVERY_PAGE_DELAY_SECONDS if state.count_after is not None else self._tick))
             if state.discovery_pending or state.scan_in_progress or not state.reconcile_complete or state.degraded:
                 deadlines.append(max(now, state.next_discovery_at))
         return None if not deadlines else max(0.001, min(deadlines) - now)
