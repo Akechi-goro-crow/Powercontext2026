@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn, Protocol
 from urllib.parse import quote, unquote
 
 from pydantic import AfterValidator, BaseModel, Field
-from pypdf import PdfReader, get_configuration
+from pypdf import PageObject, PdfReader, get_configuration
 from pypdf.generic import (
     ArrayObject,
     ContentStream,
@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 
 PDF_PAGE_SOURCE_NAME = "pdf-page"
 _WORDS = re.compile(r"[^\W_]+", re.UNICODE)
+_SPACED_GLYPHS = re.compile(r"(?<!\w)(?:[A-Za-z0-9][ \t]+){7,}[A-Za-z0-9](?!\w)")
 _STOP_WORDS = frozenset([
     "a",
     "an",
@@ -167,25 +168,84 @@ _CONCEPTS = (
     ("restructuring reorganization", "restructuring reorganization charges costs"),
     ("cogs", "cost goods sales sold"),
 )
+_STATEMENT_HEADINGS = {
+    "income": (
+        r"(?:(?:consolidated|combined) )?(?:statements? of (?:income|earnings|operations|loss)"
+        r"(?: \(loss\))?(?: and comprehensive (?:income|loss)(?: \(loss\))?)?|income statements)"
+    ),
+    "cash": r"(?:(?:consolidated|combined) )?(?:statements? of cash flows?|cash flows? statements?)",
+    "balance": (r"(?:(?:consolidated|combined) )?(?:balance sheets?|statements? of financial (?:position|condition))"),
+}
 _HEADING_CUES = (
     (
         r"income statements?|statements? of (?:income|earnings|operations)|p\s*&\s*l|ebitda|margin",
-        r"(?:(?:consolidated|combined) )?statements? of (?:income|earnings|operations|loss)"
-        r"(?: \(loss\))?(?: and comprehensive (?:income|loss))?|income statements",
+        _STATEMENT_HEADINGS["income"],
     ),
     (
         r"cash flows?|ebitda|capex|depreciation|amortization",
-        r"(?:(?:consolidated|combined) )?statements? of cash flows?",
+        _STATEMENT_HEADINGS["cash"],
     ),
     (
         r"balance sheets?|assets|liabilities|working capital|equity|liquidity",
-        r"(?:(?:consolidated|combined) )?balance sheets?|statements? of financial (?:position|condition)",
+        _STATEMENT_HEADINGS["balance"],
     ),
     (
         r"geograph|regions?|countries",
         r"(?:our )?divisions?|(?:our )?segments?|geographic(?:al)? (?:information|areas|data)",
     ),
     (r"legal|lawsuits?|battles?|litigation", r"legal proceedings|litigation"),
+)
+
+# Retrieve each input of a financial metric independently. These are accounting
+# relationships, not answers: only text from the caller's Memory is ranked.
+_FINANCIAL_COMPONENTS = {
+    "revenue": ("income", "revenue sales turnover"),
+    "income": ("income", "net income earnings profit"),
+    "operating": ("income", "operating income earnings profit"),
+    "cost": ("income", "cost revenue sales goods sold"),
+    "interest": ("income", "interest expense finance costs"),
+    "tax": ("income", "income before taxes provision tax expense"),
+    "assets": ("balance", "total assets"),
+    "equity": ("balance", "total shareholders stockholders equity"),
+    "receivables": ("balance", "trade accounts receivable receivables"),
+    "inventory": ("balance", "inventories inventory"),
+    "payables": ("balance", "trade accounts payable payables"),
+    "current": ("balance", "current assets current liabilities"),
+    "cash": ("balance", "cash equivalents short term investments"),
+    "debt": ("balance", "debt borrowings obligations liabilities"),
+    "operating_cash": ("cash", "net cash provided used operating activities operations"),
+    "capex": ("cash", "capital expenditures spending additions purchases property plant equipment"),
+    "depreciation": ("cash", "depreciation amortization"),
+    "dividends": ("cash", "cash dividends paid distributions"),
+}
+_METRIC_COMPONENTS = (
+    (r"\b(?:revenue|sales|turnover)\b", ("revenue",)),
+    (r"\b(?:net income|earnings|profit|margin|income statements?|p\s*&\s*l)\b", ("income", "revenue")),
+    (r"\b(?:operating income|operating profit|ebit)\b", ("operating",)),
+    (r"\b(?:gross|cogs|cost of (?:goods|sales|revenue))\b", ("revenue", "cost")),
+    (r"\b(?:roa|return on (?:total )?assets?)\b", ("income", "assets")),
+    (r"\b(?:roe|return on (?:shareholders.? |stockholders.? )?equity)\b", ("income", "equity")),
+    (r"\b(?:roic|return on invested capital)\b", ("operating", "tax", "debt", "equity", "cash")),
+    (r"\b(?:dso|days sales outstanding|receivables? turnover)\b", ("receivables", "revenue")),
+    (r"\b(?:dpo|days payables? outstanding|payables? turnover)\b", ("payables", "cost")),
+    (r"\b(?:dio|days inventory outstanding|inventory turnover)\b", ("inventory", "cost")),
+    (
+        r"\b(?:cash conversion cycle|cash operating cycle)\b",
+        ("receivables", "inventory", "payables", "revenue", "cost"),
+    ),
+    (r"\bassets? turnover\b", ("revenue", "assets")),
+    (r"\b(?:working capital|liquidity|current ratio|quick ratio)\b", ("current", "cash", "inventory")),
+    (r"\b(?:cash balance|cash ratio|cash equivalents)\b", ("cash", "current")),
+    (r"\b(?:debt|borrowings|leverage)\b", ("debt", "equity")),
+    (r"\binterest coverage\b", ("operating", "interest")),
+    (r"\b(?:effective tax|tax rate)\b", ("tax",)),
+    (r"\b(?:ebitda)\b", ("operating", "depreciation")),
+    (r"\b(?:capex|capital (?:expenditures?|spending))\b", ("capex",)),
+    (r"\b(?:free cash flow|fcf)\b", ("operating_cash", "capex")),
+    (r"\b(?:cash flows?|operating cash|cash conversion ratio)\b", ("operating_cash",)),
+    (r"\b(?:depreciation|amortization|d\s*&\s*a)\b", ("depreciation",)),
+    (r"\bdividends?\b", ("dividends",)),
+    (r"\bpayout ratio\b", ("dividends", "income")),
 )
 
 
@@ -342,7 +402,7 @@ def _pages(document_id: str, content: bytes) -> tuple[PDFPageInput, ...]:
             page.get("/Resources", DictionaryObject()).get_object(),
             set(),
         )
-        extracted = page.extract_text() or ""
+        extracted = _extract_page_text(page)
         text = "" if extracted.strip() == "" else extracted
         pages.append(
             PDFPageInput(
@@ -357,6 +417,34 @@ def _pages(document_id: str, content: bytes) -> tuple[PDFPageInput, ...]:
     if page_count != len(pages):
         _invalid("PDF page tree does not match its declared page count")
     return tuple(pages)
+
+
+def _extract_page_text(page: PageObject) -> str:
+    text = page.extract_text() or ""
+    if not _SPACED_GLYPHS.search(text):
+        return text
+    # Some producers place each glyph in a separate text object with a trailing
+    # TJ displacement. Plain extraction mistakes that displacement for a space.
+    # Use layout only to restore word boundaries of an exact character match;
+    # retain plain text elsewhere (including rotated text omitted by layout).
+    layout = page.extract_text(extraction_mode="layout") or ""
+    offsets = [index for index, character in enumerate(layout) if not character.isspace()]
+    compact = "".join(layout[index] for index in offsets)
+
+    def restore(match: re.Match[str]) -> str:
+        original = match.group()
+        if not _SPACED_GLYPHS.search(original):
+            return original
+        characters = "".join(original.split())
+        start = compact.find(characters)
+        if start < 0 or compact.find(characters, start + 1) >= 0:
+            return original
+        replacement = " ".join(layout[offsets[start] : offsets[start + len(characters) - 1] + 1].split())
+        if len(_WORDS.findall(replacement)) >= len(_WORDS.findall(original)):
+            return original
+        return replacement
+
+    return re.sub(r"(?m)^[^\r\n]+", restore, text)
 
 
 def _validate_page_tree(value: PdfObject, seen: set[int]) -> int:
@@ -567,8 +655,10 @@ def _rank_pages(
         frequencies.update(page.terms.keys())
     average_length = max(1.0, sum(page.terms.total() for page in pages) / len(pages))
     affinities = {page.document_id: _document_affinity(question, page.document_id) for page in pages}
+    # A historical year alone is not evidence about a financial question.
+    query = {term: weight for term, weight in query.items() if not re.fullmatch(r"(?:19|20)\d{2}", term)}
     headings = tuple(pattern for cue, pattern in _HEADING_CUES if re.search(cue, question, re.IGNORECASE))
-    scored: list[tuple[float, float, str, _Page]] = []
+    scored: list[tuple[float, str, _Page]] = []
     for page in pages:
         score = _bm25(page.terms, query, frequencies, len(pages), average_length)
         if score <= 0:
@@ -579,14 +669,72 @@ def _rank_pages(
         if lexical_rank is not None:
             score += 2.0 / lexical_rank
         name_match, year_match = affinities[page.document_id]
-        # Report identity is stronger evidence of the requested year than repeated
-        # historical-year mentions in another report. Keep this a bounded prior:
-        # a later report can still supply comparative data for an earlier year.
-        score += 8.0 * year_match
-        # An explicitly named report outranks similar vocabulary in other companies.
-        scored.append((name_match, score, page.source_id, page))
-    scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
-    return [page for _, _, _, page in scored]
+        # Identity is a bounded prior, never a hard partition: company names can
+        # overlap ordinary query words, and later reports contain comparative data.
+        identity = set(_tokens(page.document_id))
+        if any(page.terms[term] for term in query if term not in identity):
+            score += 6.0 * name_match + 4.0 * year_match
+        scored.append((score, page.source_id, page))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    ranked = [page for _, _, page in scored]
+    components = _rank_financial_components(question, pages, frequencies, average_length, affinities)
+    return _merge_component_rankings(ranked, components)
+
+
+def _merge_component_rankings(ranked: list[_Page], components: list[list[_Page]]) -> list[_Page]:
+    if not components:
+        return ranked
+    # Preserve the best source for each required input before filling remaining
+    # slots. Rank fusion alone can let one verbose topic crowd out another input.
+    # Keep the overall intent first: e.g. lawsuits about revenue recognition are
+    # primarily a legal question even though revenue is a financial component.
+    selected = {ranked[0].source_id: ranked[0]} if ranked else {}
+    for component in components:
+        selected.setdefault(component[0].source_id, component[0])
+    fused: dict[str, float] = {}
+    candidates = {page.source_id: page for page in ranked}
+    for ranking, weight in [(ranked, 1.0), *((component, 1.0 / len(components)) for component in components)]:
+        for rank, page in enumerate(ranking, start=1):
+            candidates[page.source_id] = page
+            fused[page.source_id] = fused.get(page.source_id, 0.0) + weight / (20.0 + rank)
+    for source_id in sorted(fused, key=lambda source_id: (-fused[source_id], source_id)):
+        selected.setdefault(source_id, candidates[source_id])
+    return list(selected.values())
+
+
+def _rank_financial_components(
+    question: str,
+    pages: list[_Page],
+    frequencies: Counter[str],
+    average_length: float,
+    affinities: dict[str, tuple[float, float]],
+) -> list[list[_Page]]:
+    component_names = dict.fromkeys(
+        component
+        for pattern, components in _METRIC_COMPONENTS
+        if re.search(pattern, question, re.IGNORECASE)
+        for component in components
+    )
+    rankings = []
+    heading_matches: dict[tuple[str, str], int] = {}
+    for name in component_names:
+        kind, terms = _FINANCIAL_COMPONENTS[name]
+        query = dict.fromkeys(_tokens(terms), 1.0)
+        scored: list[tuple[float, str, _Page]] = []
+        for page in pages:
+            score = _bm25(page.terms, query, frequencies, len(pages), average_length)
+            if score <= 0:
+                continue
+            key = (page.source_id, kind)
+            if key not in heading_matches:
+                heading_matches[key] = _heading_matches(page.text, (_STATEMENT_HEADINGS[kind],))
+            name_match, year_match = affinities[page.document_id]
+            score += 20.0 * heading_matches[key] + 6.0 * name_match + 4.0 * year_match
+            scored.append((score, page.source_id, page))
+        if scored:
+            scored.sort(key=lambda item: (-item[0], item[1]))
+            rankings.append([page for _, _, page in scored])
+    return rankings
 
 
 def _bm25(
