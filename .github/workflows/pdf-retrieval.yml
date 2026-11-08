@@ -8,6 +8,7 @@ on:
       - tests/test_pdf_pages.py
       - tests/pdf_helpers.py
       - tests/e2e/test_pdf_retrieval.py
+      - tests/e2e/test_pdf_retrieval_ranking.py
       - pyproject.toml
       - uv.lock
       - .github/workflows/pdf-retrieval.yml
@@ -17,6 +18,7 @@ on:
       - tests/test_pdf_pages.py
       - tests/pdf_helpers.py
       - tests/e2e/test_pdf_retrieval.py
+      - tests/e2e/test_pdf_retrieval_ranking.py
       - .github/workflows/pdf-retrieval.yml
   workflow_dispatch:
 
@@ -67,4 +69,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-        run: python -m pytest -q tests/test_pdf_pages.py tests/e2e/test_pdf_retrieval.py
+        run: >-
+          python -m pytest -q
+          tests/test_pdf_pages.py tests/e2e/test_pdf_retrieval.py
+          tests/e2e/test_pdf_retrieval_ranking.py

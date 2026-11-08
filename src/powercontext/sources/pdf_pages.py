@@ -159,18 +159,22 @@ _CONCEPTS = (
 _HEADING_CUES = (
     (
         r"income statements?|statements? of (?:income|earnings|operations)|p\s*&\s*l|ebitda|margin",
-        r"(?:consolidated|combined) statements? of (?:income|earnings|operations)|income statements?",
+        r"(?:(?:consolidated|combined) )?statements? of (?:income|earnings|operations|loss)"
+        r"(?: \(loss\))?(?: and comprehensive (?:income|loss))?|income statements",
     ),
-    (r"cash flows?|ebitda|capex|depreciation|amortization", r"(?:consolidated|combined) statements? of cash flows?"),
+    (
+        r"cash flows?|ebitda|capex|depreciation|amortization",
+        r"(?:(?:consolidated|combined) )?statements? of cash flows?",
+    ),
     (
         r"balance sheets?|assets|liabilities|working capital|equity|liquidity",
-        r"(?:consolidated|combined) balance sheets?|statements? of financial (?:position|condition)",
+        r"(?:(?:consolidated|combined) )?balance sheets?|statements? of financial (?:position|condition)",
     ),
     (
         r"geograph|regions?|countries",
         r"(?:our )?divisions?|(?:our )?segments?|geographic(?:al)? (?:information|areas|data)",
     ),
-    (r"legal|lawsuits?|battles?|litigation", r"(?:item\s+\d+\.?\s*)?legal proceedings|litigation"),
+    (r"legal|lawsuits?|battles?|litigation", r"legal proceedings|litigation"),
 )
 
 
@@ -413,6 +417,27 @@ def _document_affinity(question: str, document_id: str) -> tuple[float, float]:
     return name_match, year_match
 
 
+def _heading_matches(text: str, patterns: tuple[str, ...]) -> int:
+    # A section may start after a long table or paragraph, anywhere on the page.
+    # Match whole lines: index page numbers and exhibit references are not headings.
+    if not patterns:
+        return 0
+    lines = [" ".join(line.split()) for line in unicodedata.normalize("NFKC", text).casefold().splitlines()]
+    headings: set[str] = set()
+    for start in range(len(lines)):
+        # Narrow columns can wrap a title; never join a heading to a long paragraph.
+        for end in range(start + 1, min(start + 4, len(lines) + 1)):
+            heading = " ".join(lines[start:end]).strip(" .:")
+            if len(heading) > 160:
+                break
+            heading = re.sub(r"^(?:item\s+\d+[a-z]?[.:]?\s*|(?:\(?unaudited\)?|condensed)\s+)+", "", heading)
+            heading = re.sub(
+                r"(?:\s*\((?:continued|unaudited|in (?:thousands|millions|billions)[^()]*)\))+$", "", heading
+            )
+            headings.add(heading)
+    return sum(any(re.fullmatch(pattern, heading) for heading in headings) for pattern in patterns)
+
+
 def _rank_pages(
     question: str,
     query: dict[str, float],
@@ -430,16 +455,16 @@ def _rank_pages(
         score = _bm25(page.terms, query, frequencies, len(pages), average_length)
         if score <= 0:
             continue
-        # Many reports put a "Table of Contents" navigation link on every page.
-        # Match actual heading lines; that link must not suppress financial tables.
-        lines = [" ".join(line.casefold().split()) for line in page.text.splitlines()[:12]]
-        score += 20.0 * sum(any(re.match(pattern, line) for line in lines) for pattern in headings)
+        score += 20.0 * _heading_matches(page.text, headings)
         entry = page.record.entry
         lexical_rank = lexical_ranks.get((entry.entry_id, entry.entry_version_id))
         if lexical_rank is not None:
             score += 2.0 / lexical_rank
         name_match, year_match = affinities[page.document_id]
-        score += year_match
+        # Report identity is stronger evidence of the requested year than repeated
+        # historical-year mentions in another report. Keep this a bounded prior:
+        # a later report can still supply comparative data for an earlier year.
+        score += 8.0 * year_match
         # An explicitly named report outranks similar vocabulary in other companies.
         scored.append((name_match, score, page.source_id, page))
     scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
