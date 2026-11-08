@@ -27,6 +27,8 @@ from pypdf import PdfReader
 from pypdf.generic import ArrayObject, ContentStream, DictionaryObject, NullObject, PdfObject, StreamObject
 from typing_extensions import override
 
+from powercontext.sources._pdf_text import extract_text
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -75,7 +77,7 @@ def extract_pages(stream: io.BytesIO) -> tuple[str, ...]:
             resources = _resources(page.get("/Resources"))
             _validate_content(page.get("/Contents"), reader, validated, resources)
             _validate_forms(resources, reader, validated)
-            texts.append(page.extract_text())
+            texts.append(extract_text(page, reader, resources))
         return tuple(texts)
 
 

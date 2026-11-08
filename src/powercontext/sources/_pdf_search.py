@@ -295,15 +295,30 @@ def _pages(records: tuple[MemoryEntryRecord, ...]) -> list[_Page]:
 
 
 def _select_documents(pages: list[_Page], question: str) -> list[_Page]:
-    query = " " + " ".join(_terms(question)) + " "
-    names = {}
+    # Match complete issuer names across token boundaries: CEDARVALLEY and
+    # Cedar Valley denote the same name, while Cedar Ridge is a different one.
+    # Retain boundaries so 3M cannot match "3 million" or "2023 margin".
+    query = _WORDS.findall(unicodedata.normalize("NFKC", question).casefold())
+    matched = set()
     for document in {page.document for page in pages}:
         # Document names often encode an issuer followed by the filing year/type.
         # An unknown/opaque name leaves the full scoped corpus eligible.
-        name = _YEARS.split(document)[0]
-        words = [word for word in _terms(name) if word not in _STOP and word not in {"k", "q", "plc", "ltd", "corp"}]
-        names[document] = sum(len(word) for word in words if _contains(query, word))
-    matched = {document for document, score in names.items() if score > 0}
+        name = _YEARS.split(document.replace("\\", "/").rsplit("/", 1)[-1])[0]
+        words = _WORDS.findall(unicodedata.normalize("NFKC", name).casefold())
+        while words and words[-1] in {"company", "corporation", "inc", "incorporated", "plc", "ltd", "corp"}:
+            words.pop()
+        issuer = "".join(words)
+        if not issuer:
+            continue
+        for start in range(len(query)):
+            candidate = ""
+            for word in query[start:]:
+                candidate += word
+                if candidate == issuer:
+                    matched.add(document)
+                    break
+                if not issuer.startswith(candidate):
+                    break
     if matched:
         pages = [page for page in pages if page.document in matched]
     return pages

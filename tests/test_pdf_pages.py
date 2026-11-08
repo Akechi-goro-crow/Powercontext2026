@@ -28,6 +28,7 @@ from pypdf.generic import (
     EncodedStreamObject,
     NameObject,
     NumberObject,
+    TextStringObject,
 )
 
 from powercontext.sources import SourceDefinitionRegistry, SourceMaterialization, project_source_for_transport
@@ -202,3 +203,64 @@ def test_page_operations_can_span_multiple_content_streams() -> None:
         pieces.append(writer._add_object(stream))
     writer.pages[0][NameObject("/Contents")] = pieces
     assert "Split operations 123" in _parse(writer)[0].text
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_marked_content_actual_text_preserves_words(named: bool) -> None:
+    properties = b"/Ligature" if named else b"<< /ActualText (ti) >>"
+    writer = _writer(b"BT /F1 12 Tf 40 700 Td (Sec) Tj /Span " + properties + b" BDC (X) Tj EMC (on 123) Tj ET")
+    if named:
+        resources = writer.pages[0]["/Resources"]
+        assert isinstance(resources, DictionaryObject)
+        resources[NameObject("/Properties")] = DictionaryObject({
+            NameObject("/Ligature"): DictionaryObject({NameObject("/ActualText"): TextStringObject("ti")})
+        })
+    assert _parse(writer)[0].text.strip() == "Section 123"
+
+
+def test_outer_actual_text_replaces_the_complete_span_once() -> None:
+    writer = _writer(
+        b"BT /F1 12 Tf 40 700 Td /Span << /ActualText (Net income 123) >> BDC "
+        b"(Wrong) Tj /Span << /ActualText (Nested) >> BDC (glyph) Tj EMC (text) Tj EMC ET"
+    )
+    assert _parse(writer)[0].text.strip() == "Net income 123"
+
+
+def test_actual_text_preserves_form_resources_and_repeated_invocations() -> None:
+    writer = _writer(b"/Span << /ActualText (Replacement) >> BDC /Fm Do EMC /Fm Do")
+    form = DecodedStreamObject()
+    form.set_data(b"BT /F1 12 Tf 40 700 Td (Sec) Tj /Span /Word BDC [(X)] TJ EMC (on 123) Tj ET")
+    form[NameObject("/Subtype")] = NameObject("/Form")
+    form[NameObject("/BBox")] = ArrayObject([NumberObject(n) for n in [0, 0, 600, 800]])
+    form[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): _font()}),
+        NameObject("/Properties"): DictionaryObject({
+            NameObject("/Word"): DictionaryObject({NameObject("/ActualText"): TextStringObject("ti")})
+        }),
+    })
+    resources = writer.pages[0]["/Resources"]
+    assert isinstance(resources, DictionaryObject)
+    resources[NameObject("/Properties")] = DictionaryObject({
+        NameObject("/Word"): DictionaryObject({NameObject("/ActualText"): TextStringObject("wrong")})
+    })
+    resources[NameObject("/XObject")] = DictionaryObject({NameObject("/Fm"): writer._add_object(form)})
+    assert _parse(writer)[0].text.split() == ["Replacement", "Section", "123"]
+
+
+def test_actual_text_decodes_unicode_independently_of_font_encoding() -> None:
+    writer = _writer(b"BT /F1 12 Tf 40 700 Td /Span << /ActualText <FEFF65365165989D> >> BDC (XXX) Tj EMC ET")
+    assert _parse(writer)[0].text.strip() == "收入额"
+
+
+def test_trailing_position_adjustments_do_not_split_words() -> None:
+    writer = _writer(
+        b"BT /F1 12 Tf 1 0 0 1 40 700 Tm [(N) -20000] TJ "
+        b"1 0 0 1 48.664 700 Tm [(e) -19000] TJ "
+        b"1 0 0 1 55.336 700 Tm [(t) -18000] TJ ET"
+    )
+    assert _parse(writer)[0].text.strip() == "Net"
+
+
+def test_trailing_spacing_before_continued_text_keeps_word_boundary() -> None:
+    writer = _writer(b"BT /F1 12 Tf 40 700 Td [(Net) -1000] TJ (income 123) Tj ET")
+    assert _parse(writer)[0].text.strip() == "Net income 123"
