@@ -6,6 +6,7 @@ on:
     paths:
       - src/powercontext/sources/pdf_pages.py
       - tests/test_pdf_pages.py
+      - tests/test_pdf_form_content.py
       - tests/pdf_helpers.py
       - tests/e2e/test_pdf_retrieval.py
       - tests/e2e/test_pdf_retrieval_ranking.py
@@ -16,6 +17,7 @@ on:
     paths:
       - src/powercontext/sources/pdf_pages.py
       - tests/test_pdf_pages.py
+      - tests/test_pdf_form_content.py
       - tests/pdf_helpers.py
       - tests/e2e/test_pdf_retrieval.py
       - tests/e2e/test_pdf_retrieval_ranking.py
@@ -71,5 +73,5 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: >-
           python -m pytest -q
-          tests/test_pdf_pages.py tests/e2e/test_pdf_retrieval.py
+          tests/test_pdf_pages.py tests/test_pdf_form_content.py tests/e2e/test_pdf_retrieval.py
           tests/e2e/test_pdf_retrieval_ranking.py

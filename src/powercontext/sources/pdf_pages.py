@@ -21,6 +21,7 @@ import json
 import math
 import re
 import unicodedata
+import zlib
 from collections import Counter
 from dataclasses import dataclass
 from io import BytesIO
@@ -28,8 +29,18 @@ from typing import TYPE_CHECKING, Annotated, NoReturn, Protocol
 from urllib.parse import quote, unquote
 
 from pydantic import AfterValidator, BaseModel, Field
-from pypdf import PdfReader
-from pypdf.generic import DictionaryObject
+from pypdf import PdfReader, get_configuration
+from pypdf.generic import (
+    ArrayObject,
+    ContentStream,
+    DictionaryObject,
+    EncodedStreamObject,
+    NameObject,
+    NullObject,
+    NumberObject,
+    PdfObject,
+    StreamObject,
+)
 
 from powercontext.artifacts import MemoryCitation
 from powercontext.limits import MAX_SOURCE_ID_LENGTH
@@ -317,13 +328,20 @@ async def search_pdf_pages(memory: _ScopedMemory, question: str, limit: int = 10
 
 def _pages(document_id: str, content: bytes) -> tuple[PDFPageInput, ...]:
     digest = hashlib.sha256(content).hexdigest()
-    # Strict mode rejects damaged objects instead of silently repairing a report
-    # into a shorter document or treating an unreadable page as an empty page.
     reader = PdfReader(BytesIO(content), strict=True)
     if reader.is_encrypted and reader.decrypt("") == 0:
         _invalid("PDF user password is not empty")
+    # pypdf's strict mode still repairs some streams and ignores child counts.
+    # Validate before accepting text, including pages that have no font resources.
+    page_count = _validate_page_tree(reader.root_object["/Pages"], set())
     pages: list[PDFPageInput] = []
     for page_number, page in enumerate(reader.pages, start=1):
+        _validate_contents(
+            page.get("/Contents", NullObject()),
+            reader,
+            page.get("/Resources", DictionaryObject()).get_object(),
+            set(),
+        )
         extracted = page.extract_text() or ""
         text = "" if extracted.strip() == "" else extracted
         pages.append(
@@ -336,10 +354,110 @@ def _pages(document_id: str, content: bytes) -> tuple[PDFPageInput, ...]:
         )
     if not pages:
         _invalid("PDF contains no pages")
-    page_tree = reader.root_object["/Pages"]
-    if not isinstance(page_tree, DictionaryObject) or page_tree.get("/Count") != len(pages):
+    if page_count != len(pages):
         _invalid("PDF page tree does not match its declared page count")
     return tuple(pages)
+
+
+def _validate_page_tree(value: PdfObject, seen: set[int]) -> int:
+    node = value.get_object()
+    if not isinstance(node, DictionaryObject) or id(node) in seen:
+        _invalid("PDF page tree contains an invalid or repeated node")
+    seen.add(id(node))
+    node_type = node.get("/Type", NullObject()).get_object()
+    if node_type == "/Page":
+        return 1
+    if node_type != "/Pages":
+        _invalid("PDF page tree contains an invalid node type")
+    # Indexing resolves legal indirect references; dict.get does not.
+    children, declared = node["/Kids"], node["/Count"]
+    if not isinstance(children, ArrayObject) or not isinstance(declared, NumberObject):
+        _invalid("PDF page tree has invalid children or count")
+    actual = sum(_validate_page_tree(child, seen) for child in children)
+    if actual != declared:
+        _invalid("PDF page subtree does not match its declared page count")
+    return actual
+
+
+def _validate_contents(contents: PdfObject, reader: PdfReader, resources: PdfObject, forms: set[int]) -> None:
+    resolved = contents.get_object()
+    if isinstance(resolved, NullObject):
+        return
+    streams = resolved if isinstance(resolved, ArrayObject) else (resolved,)
+    for reference in streams:
+        if reference is None:
+            _invalid("PDF contents reference cannot be resolved")
+        stream = reference.get_object()
+        if isinstance(stream, NullObject):
+            continue
+        if not isinstance(stream, StreamObject):
+            _invalid("PDF contents must be a stream or an array of streams")
+        _validate_stream_filters(stream)
+    # Parse instructions even when extract_text would shortcut to an empty string.
+    # Form extraction catches exceptions internally, so validate invoked forms too.
+    for operands, operator in ContentStream(resolved, reader, "bytes").operations:
+        if operator != b"Do":
+            continue
+        if len(operands) != 1 or not isinstance(resources, DictionaryObject):
+            _invalid("PDF XObject invocation has invalid resources or operands")
+        xobjects = resources["/XObject"]
+        if not isinstance(xobjects, DictionaryObject):
+            _invalid("PDF XObject resources must be a dictionary")
+        _validate_form(xobjects[operands[0]], reader, resources, forms)
+
+
+def _validate_form(form: PdfObject, reader: PdfReader, resources: PdfObject, forms: set[int]) -> None:
+    if not isinstance(form, StreamObject):
+        _invalid("PDF XObject must be a stream")
+    if form.get("/Subtype", NullObject()).get_object() != "/Form":
+        return  # Image data is not a PDF instruction stream; no OCR is required.
+    if id(form) in forms:
+        _invalid("PDF contains a recursive Form XObject")
+    forms.add(id(form))
+    try:
+        _validate_contents(form, reader, form.get("/Resources", resources).get_object(), forms)
+    finally:
+        forms.remove(id(form))
+
+
+def _validate_stream_filters(stream: StreamObject) -> None:
+    filters = stream.get("/Filter", NullObject()).get_object()
+    if isinstance(filters, NullObject):
+        return
+    filters = filters if isinstance(filters, ArrayObject) else ArrayObject([filters])
+    params = stream.get("/DecodeParms", NullObject()).get_object()
+    if isinstance(params, NullObject):
+        params = ArrayObject([NullObject() for _ in filters])
+    elif not isinstance(params, ArrayObject):
+        params = ArrayObject([params])
+    if len(params) != len(filters):
+        _invalid("PDF stream filters and parameters do not match")
+    for index, name in enumerate(filters):
+        if name.get_object() not in ("/FlateDecode", "/Fl"):
+            continue
+        # The pinned pypdf decoder silently recovers corrupt/truncated Flate data.
+        # Decode preceding filters on a copy, then require a complete zlib stream.
+        prefix = EncodedStreamObject()
+        prefix._data = stream._data
+        prefix[NameObject("/Filter")] = ArrayObject(filters[:index])
+        prefix[NameObject("/DecodeParms")] = ArrayObject(params[:index])
+        _validate_flate_data(prefix.get_data())
+
+
+def _validate_flate_data(pending: bytes) -> None:
+    decoder = zlib.decompressobj()
+    maximum_length = get_configuration().zlib_maximum_output_length
+    decoded_length = 0
+    while True:
+        chunk = decoder.decompress(pending, 65536)
+        decoded_length += len(chunk)
+        if maximum_length and decoded_length > maximum_length:
+            _invalid("PDF Flate stream exceeds the configured decoding limit")
+        pending = decoder.unconsumed_tail
+        if decoder.eof:
+            return
+        if not pending and len(chunk) < 65536:
+            _invalid("PDF contains a truncated Flate stream")
 
 
 @dataclass(frozen=True)
