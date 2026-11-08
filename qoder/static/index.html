@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>研究资料伴读台</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    body { margin: 0; background: #101827; color: #e5edf7; }
+    main { max-width: 1100px; margin: 0 auto; padding: 42px 22px 72px; }
+    h1 { font-size: 42px; margin: 0 0 10px; letter-spacing: -1px; }
+    .subtitle { color: #9eb2cc; margin-bottom: 30px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+    section { background: #182338; border: 1px solid #2b3b58; border-radius: 16px; padding: 20px; box-shadow: 0 12px 32px #08101d66; }
+    h2 { margin-top: 0; font-size: 20px; }
+    input, textarea { width: 100%; box-sizing: border-box; background: #0f1728; color: #eef5ff; border: 1px solid #405271; border-radius: 10px; padding: 11px; margin: 7px 0 12px; }
+    textarea { min-height: 130px; resize: vertical; }
+    button { background: #67e8b0; color: #092018; border: 0; border-radius: 10px; padding: 11px 15px; font-weight: 700; cursor: pointer; }
+    button.secondary { background: #29415e; color: #e5edf7; }
+    #results, #memory, #status { margin-top: 18px; white-space: pre-wrap; line-height: 1.55; }
+    .result { padding: 12px 0; border-bottom: 1px solid #2b3b58; }
+    .result:last-child { border-bottom: 0; }
+    .hint { color: #9eb2cc; font-size: 13px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>研究资料伴读台</h1>
+  <div class="subtitle">把零散笔记变成可追溯的研究上下文。seekdb 负责检索，PowerContext 记住你的研究方向和进度。</div>
+  <div class="grid">
+    <section>
+      <h2>导入一份资料</h2>
+      <input id="title" placeholder="标题，例如：Transformer 复习笔记" />
+      <input id="tags" placeholder="标签，用逗号分隔，例如：深度学习,注意力" />
+      <input id="source" value="manual" placeholder="来源" />
+      <textarea id="content" placeholder="粘贴论文摘要、课程笔记或实验记录"></textarea>
+      <button onclick="ingest()">加入资料库</button>
+    </section>
+    <section>
+      <h2>按问题找资料</h2>
+      <input id="query" placeholder="例如：注意力机制如何减少长距离依赖？" />
+      <button onclick="searchNotes()">检索</button>
+      <div id="results" class="hint">检索结果会显示在这里。</div>
+    </section>
+    <section>
+      <h2>我的研究上下文</h2>
+      <input id="userId" value="demo-researcher" placeholder="用户标识" />
+      <textarea id="memoryText" placeholder="例如：我正在复习 Transformer，薄弱点是位置编码"></textarea>
+      <button onclick="saveMemory()">保存进度</button>
+      <button class="secondary" onclick="loadMemory()">读取历史</button>
+      <div id="memory" class="hint">PowerContext 记忆会显示在这里。</div>
+    </section>
+  </div>
+  <div id="status" class="hint"></div>
+</main>
+<script>
+const call = (path, body) => fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail || '请求失败'); return data; });
+function setStatus(text) { document.getElementById('status').textContent = text; }
+async function ingest() { try { const data = await call('/api/ingest', { title: title.value, content: content.value, tags: tags.value.split(',').map(x => x.trim()).filter(Boolean), source: source.value }); setStatus(data.message + '：' + data.title); } catch (e) { setStatus(e.message); } }
+async function searchNotes() { try { const data = await call('/api/search', { query: query.value, limit: 5 }); results.innerHTML = data.results.length ? data.results.map(x => `<div class="result"><b>${x.metadata?.title || x.id}</b><br>${x.content}</div>`).join('') : '没有找到相关资料。'; } catch (e) { results.textContent = e.message; } }
+async function saveMemory() { try { const data = await call('/api/memory/save', { user_id: userId.value, text: memoryText.value }); memory.textContent = JSON.stringify(data.result, null, 2); setStatus('研究进度已保存到 PowerContext。'); } catch (e) { memory.textContent = e.message; } }
+async function loadMemory() { try { const data = await call('/api/memory/load', { user_id: userId.value, text: '' }); memory.textContent = JSON.stringify(data.memory, null, 2); setStatus('已从 PowerContext 读取历史上下文。'); } catch (e) { memory.textContent = e.message; } }
+</script>
+</body>
+</html>
