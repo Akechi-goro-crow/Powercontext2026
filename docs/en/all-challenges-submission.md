@@ -2,7 +2,7 @@
 
 Repository: `https://github.com/Akechi-goro-crow/Powercontext2026`
 
-Branch: `codex/pdf-fresh-start`
+Branch: `codex/pdf-fresh-start-2`
 
 This branch starts from the published competition baseline and preserves the
 existing implementations for the nine code challenges other than challenge 4,
@@ -36,3 +36,4 @@ make -C competition test-csv test-pi test-rerank test-incremental test-count-tri
 
 These are the public checks. Official private quality thresholds, repository
 permissions and platform task selection are evaluated separately.
+
