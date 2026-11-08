@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from powercontext.builtin.artifacts.memory import MemoryEntryInput
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import (
@@ -138,5 +140,57 @@ def test_restarted_scoped_memory_retrieves_metric_components_and_exact_revisions
             current = await search_pdf_pages(memory, "Acme legal battles", 2)
             assert legal[0].entry_id not in {citation.entry_id for citation in current}
             assert (await memory.get(GetMemoryEntryRequest(citation=legal[0]))).state == "active"
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    ("document_id", "other_id", "question"),
+    [
+        ("CEDARVALLEY_2024_10K", "CEDAR_RIDGE_2024_10K", "What was Cedar Valley's operating profit?"),
+        ("CEDAR_VALLEY_2024_10K", "CEDAR_RIDGE_2024_10K", "What was Cedar Valley's operating profit?"),
+        ("CEDAR_VALLEY_INC_2024_10K", "CEDAR_RIDGE_2024_10K", "What was Cedar Valley's operating profit?"),
+        ("CEDARVALLEY_2024_10K", "3M_2024_10K", "Was Cedar Valley's 2023 margin based on 3 million operating profit?"),
+    ],
+)
+def test_company_names_with_spaces_do_not_select_another_issuer(
+    tmp_path: Path, document_id: str, other_id: str, question: str
+) -> None:
+    async def check() -> None:
+        config = BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'issuers.db'}"))
+        registry = SourceDefinitionRegistry((PDF_PAGE_SOURCE_DEFINITION,))
+        pages = [
+            PDFPageInput(
+                document_id=document_id,
+                document_sha256="a" * 64,
+                page_number=1,
+                text="Consolidated statement of income\nOperating profit 123.",
+            ),
+            PDFPageInput(
+                document_id=other_id,
+                document_sha256="b" * 64,
+                page_number=1,
+                text="Consolidated statement of income\nOperating profit operating profit revenue costs net income 456.",
+            ),
+        ]
+        async with open_builtin_runtime(config, candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Issuers", summary="Financial statements", idempotency_key="issuers")
+            )
+            await runtime.ingestion.register(manifest_for_definition(PDF_PAGE_SOURCE_DEFINITION))
+            for page in pages:
+                observation = project_source_for_transport(registry, await registry.resolve(page))
+                await runtime.ingestion.submit(
+                    SubmitSourceObservation(scope_id=scope.scope_id, observation=observation)
+                )
+            while (await runtime.memory.for_scope(scope.scope_id).flush()).processed:
+                pass
+        async with open_builtin_runtime(config) as runtime:
+            memory = runtime.memory.for_scope(scope.scope_id)
+            citations = await search_pdf_pages(memory, question, 1)
+            assert len(citations) == 1
+            entry = (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry
+            assert entry.text.startswith(document_id + "\n")
 
     asyncio.run(check())
