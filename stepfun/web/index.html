@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>端侧知识库</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    body { margin: 0; background: #10131b; color: #f4f7fb; }
+    main { max-width: 1060px; margin: auto; padding: 42px 22px 70px; }
+    h1 { font-size: 42px; margin: 0 0 8px; }
+    .sub { color: #a7b1c4; margin-bottom: 28px; }
+    .panel { background: #1a2030; border: 1px solid #303b54; border-radius: 18px; padding: 20px; margin-bottom: 18px; }
+    textarea, input { width: 100%; box-sizing: border-box; background: #101522; border: 1px solid #43516e; border-radius: 10px; color: #fff; padding: 11px; margin: 6px 0 12px; }
+    textarea { min-height: 130px; }
+    button { border: 0; border-radius: 10px; padding: 11px 16px; background: #82e6b5; color: #092116; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .status { color: #b8c5da; margin: 12px 0; white-space: pre-wrap; }
+    .badge { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #293653; color: #bfe4ff; margin-bottom: 18px; }
+    .result { border-top: 1px solid #303b54; padding: 14px 0; line-height: 1.6; }
+    .metric { display: inline-block; margin-right: 16px; color: #9fd7c2; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>端侧知识库</h1>
+  <div class="sub">文档向量化在浏览器本地完成，seekdb 负责向量与全文混合检索。</div>
+  <div id="backend" class="badge">正在检测 seekdb…</div>
+  <section class="panel">
+    <h2>1. 导入文本</h2>
+    <input id="title" placeholder="文档标题" />
+    <textarea id="text" placeholder="粘贴一段课程笔记、论文摘要或实验记录"></textarea>
+    <button id="ingest">本地向量化并写入 seekdb</button>
+    <div id="ingestStatus" class="status"></div>
+  </section>
+  <section class="panel">
+    <h2>2. 混合检索</h2>
+    <input id="query" placeholder="输入自然语言问题，例如：什么是注意力机制？" />
+    <button id="search">生成查询向量并检索</button>
+    <div id="metrics" class="status"></div>
+    <div id="results"></div>
+  </section>
+</main>
+<script type="module">
+  import { env, pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2/+esm";
+
+  const API = "http://127.0.0.1:8791";
+  env.allowLocalModels = false;
+  env.useBrowserCache = true;
+  let extractor;
+  let backend = "wasm";
+  const canWebGPU = !!navigator.gpu;
+  const model = "Xenova/all-MiniLM-L6-v2";
+
+  async function embed(text) {
+    const started = performance.now();
+    if (!extractor) {
+      backend = canWebGPU ? "webgpu" : "wasm";
+      extractor = await pipeline("feature-extraction", model, {
+        device: canWebGPU ? "webgpu" : "wasm",
+        dtype: "q8",
+      });
+    }
+    const output = await extractor(text, { pooling: "mean", normalize: true });
+    return { vector: Array.from(output.data), elapsed: performance.now() - started };
+  }
+
+  async function api(path, body) {
+    const response = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "请求失败");
+    return data;
+  }
+
+  fetch(API + "/api/health").then(r => r.json()).then(data => backendEl.textContent = `seekdb 已连接 · 浏览器推理 · ${canWebGPU ? "WebGPU 可用" : "当前将使用 WASM"}`).catch(() => backendEl.textContent = "无法连接本地 seekdb 服务");
+
+  ingest.onclick = async () => {
+    ingest.disabled = true;
+    try {
+      const local = await embed(text.value);
+      await api("/api/documents", { id: crypto.randomUUID(), title: title.value || "未命名文档", text: text.value, embedding: local.vector });
+      ingestStatus.textContent = `已完成本地 ${backend.toUpperCase()} 向量化，耗时 ${local.elapsed.toFixed(0)} ms，并刷新 seekdb 索引。`;
+    } catch (error) { ingestStatus.textContent = error.message; }
+    ingest.disabled = false;
+  };
+
+  search.onclick = async () => {
+    search.disabled = true;
+    try {
+      const local = await embed(query.value);
+      const started = performance.now();
+      const data = await api("/api/search", { query: query.value, embedding: local.vector, limit: 5 });
+      const elapsed = performance.now() - started;
+      metrics.innerHTML = `<span class="metric">查询向量化 ${local.elapsed.toFixed(0)} ms</span><span class="metric">seekdb 混合检索 ${elapsed.toFixed(0)} ms</span><span class="metric">模型 ${model} · q8</span>`;
+      const docs = data.results?.documents?.[0] || [];
+      results.innerHTML = docs.length ? docs.map((doc, index) => `<div class="result"><b>#${index + 1}</b> ${doc}</div>`).join("") : "没有找到结果。";
+    } catch (error) { results.textContent = error.message; }
+    search.disabled = false;
+  };
+</script>
+</body>
+</html>

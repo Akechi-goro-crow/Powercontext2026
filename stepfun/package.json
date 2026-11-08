@@ -1,0 +1,13 @@
+{
+  "name": "stepfun-local-knowledge-base",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "seekdb": "1.3.0"
+  }
+}
