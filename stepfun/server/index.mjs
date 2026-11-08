@@ -50,6 +50,7 @@ app.post("/api/documents", async (req, res) => {
       embeddings: [embedding],
       metadatas: [{ title: title || id }],
     });
+    await collection.refresh_index();
     return res.json({ ok: true, id });
   } catch (error) {
     return res.status(500).json({ error: String(error) });
