@@ -1,6 +1,6 @@
 import cors from "cors";
 import express from "express";
-import { FulltextIndexConfig, Schema, SeekdbClient, VectorIndexConfig } from "seekdb";
+import { FulltextIndexConfig, registerEmbeddingFunction, Schema, SeekdbClient, VectorIndexConfig } from "seekdb";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -16,6 +16,25 @@ app.use(cors());
 app.use(express.json({ limit: "4mb" }));
 
 let collectionPromise;
+class BrowserProvidedEmbedding {
+  name = "browser-embed";
+  dimension = 384;
+
+  async generate() {
+    throw new Error("Embedding must be generated in the browser");
+  }
+
+  getConfig() {
+    return { dimension: this.dimension };
+  }
+
+  static buildFromConfig() {
+    return new BrowserProvidedEmbedding();
+  }
+}
+
+registerEmbeddingFunction("browser-embed", BrowserProvidedEmbedding);
+
 async function getCollection() {
   if (!collectionPromise) {
     collectionPromise = (async () => {
@@ -27,7 +46,8 @@ async function getCollection() {
         }),
         fulltextIndex: new FulltextIndexConfig("ik"),
       });
-      return client.getOrCreateCollection({ name: "browser_documents", schema });
+      schema.vectorIndex.embeddingFunction = new BrowserProvidedEmbedding();
+      return client.getOrCreateCollection({ name: "browser_documents_v2", schema });
     })();
   }
   return collectionPromise;
